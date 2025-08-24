@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>粒子特效</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #2a2a2a;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        
+        canvas {
+            display: block;
+            cursor: crosshair;
+        }
+        
+        .controls {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 14px;
+            z-index: 1000;
+        }
+        
+        .controls h3 {
+            margin: 0 0 10px 0;
+            color: #00ff88;
+            text-shadow: 0 0 10px #00ff88;
+        }
+        
+        .controls label {
+            display: block;
+            margin: 5px 0;
+        }
+        
+        .controls input {
+            margin-left: 10px;
+            width: 60px;
+        }
+        
+        .status {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="particleCanvas"></canvas>
+    
+    <div class="controls">
+        <h3>粒子控制</h3>
+        <label>粒子數量: <input type="range" id="particleCount" min="50" max="300" value="150"></label>
+        <label>連接距離: <input type="range" id="connectionDistance" min="50" max="200" value="100"></label>
+        <label>粒子速度: <input type="range" id="particleSpeed" min="0.5" max="3" value="1.5" step="0.1"></label>
+        <label>煙花音效: <input type="checkbox" id="soundEnabled" checked></label>
+        <label>觸控板: <input type="checkbox" id="touchpadEnabled" checked></label>
+    </div>
+    
+    <div class="status" id="status">
+        粒子: 150 | 連接: 0 | FPS: 60
+    </div>
+
+    <script>
+        class Particle {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.vx = (Math.random() - 0.5) * 2;
+                this.vy = (Math.random() - 0.5) * 2;
+                this.radius = 2;
+                this.originalRadius = 2;
+                this.connections = [];
+                this.isAttracted = false;
+                this.wasAttracted = false;
+                this.fireworkMode = false;
+                this.fireworkColor = 'white';
+                this.fireworkTimer = 0;
+                this.fireworkDuration = 60; // 60 frames for fireworks effect
+                this.originalVx = this.vx;
+                this.originalVy = this.vy;
+            }
+
+            update(width, height, speed) {
+                // 煙花模式處理
+                if (this.fireworkMode) {
+                    this.fireworkTimer++;
+                    
+                    // 煙花模式下增加隨機運動
+                    this.vx += (Math.random() - 0.5) * 0.5;
+                    this.vy += (Math.random() - 0.5) * 0.5;
+                    
+                    // 限制煙花模式下的速度
+                    const maxFireworkSpeed = 5;
+                    this.vx = Math.max(-maxFireworkSpeed, Math.min(maxFireworkSpeed, this.vx));
+                    this.vy = Math.max(-maxFireworkSpeed, Math.min(maxFireworkSpeed, this.vy));
+                    
+                    // 煙花效果結束後恢復正常
+                    if (this.fireworkTimer >= this.fireworkDuration) {
+                        this.fireworkMode = false;
+                        this.fireworkColor = 'white';
+                        this.vx = this.originalVx;
+                        this.vy = this.originalVy;
+                        this.radius = this.originalRadius;
+                    }
+                } else {
+                    // 正常模式下的邊界碰撞
+                    if (this.x <= 0 || this.x >= width) {
+                        this.vx = -this.vx;
+                        this.x = Math.max(0, Math.min(width, this.x));
+                    }
+                    if (this.y <= 0 || this.y >= height) {
+                        this.vy = -this.vy;
+                        this.y = Math.max(0, Math.min(height, this.y));
+                    }
+                }
+
+                this.x += this.vx * speed;
+                this.y += this.vy * speed;
+            }
+
+            draw(ctx) {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                
+                if (this.fireworkMode) {
+                    // 煙花模式下使用隨機顏色
+                    ctx.fillStyle = this.fireworkColor;
+                    // 煙花模式下增加發光效果
+                    ctx.shadowColor = this.fireworkColor;
+                    ctx.shadowBlur = 10;
+                } else {
+                    ctx.fillStyle = 'white';
+                    ctx.shadowBlur = 0;
+                }
+                
+                ctx.fill();
+                ctx.shadowBlur = 0; // 重置陰影
+            }
+
+            connectToMouse(mouseX, mouseY, connectionDistance) {
+                const distance = Math.sqrt((this.x - mouseX) ** 2 + (this.y - mouseY) ** 2);
+                const wasAttracted = this.isAttracted;
+                
+                if (distance < connectionDistance) {
+                    // 根據距離動態調整粒子大小，越近越大
+                    const scale = 1 + (1 - distance / connectionDistance) * 2;
+                    this.radius = this.originalRadius * scale;
+                    this.isAttracted = true;
+                    this.wasAttracted = true;
+                    return distance;
+                } else {
+                    this.radius = this.originalRadius;
+                    
+                    // 檢查是否從聚集狀態散開
+                    if (wasAttracted && !this.fireworkMode) {
+                        this.triggerFirework();
+                    }
+                    
+                    this.isAttracted = false;
+                    return null;
+                }
+            }
+            
+            triggerFirework() {
+                this.fireworkMode = true;
+                this.fireworkTimer = 0;
+                
+                // 生成隨機顏色
+                const colors = [
+                    '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
+                    '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9',
+                    '#F8C471', '#82E0AA', '#F1948A', '#85C1E9', '#D7BDE2'
+                ];
+                this.fireworkColor = colors[Math.floor(Math.random() * colors.length)];
+                
+                // 增加散開速度
+                const spreadForce = 2;
+                this.vx += (Math.random() - 0.5) * spreadForce;
+                this.vy += (Math.random() - 0.5) * spreadForce;
+                
+                // 增加粒子大小
+                this.radius = this.originalRadius * 3;
+            }
+        }
+
+        class ParticleSystem {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.particles = [];
+                this.mouseX = 0;
+                this.mouseY = 0;
+                this.connectionDistance = 100;
+                this.particleSpeed = 1.5;
+                this.soundEnabled = true;
+                this.touchpadEnabled = true;
+                this.audioContext = null;
+                this.oscillator = null;
+                this.connections = [];
+                this.lastConnectionTime = 0;
+                
+                this.init();
+            }
+
+            init() {
+                this.resize();
+                this.createParticles(150);
+                this.setupEventListeners();
+                this.animate();
+            }
+
+            resize() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+            }
+
+            createParticles(count) {
+                this.particles = [];
+                for (let i = 0; i < count; i++) {
+                    // 創建粒子時稍微偏向中心，讓初始分布更均勻
+                    const centerX = this.canvas.width / 2;
+                    const centerY = this.canvas.height / 2;
+                    const spread = Math.min(this.canvas.width, this.canvas.height) * 0.3;
+                    
+                    this.particles.push(new Particle(
+                        centerX + (Math.random() - 0.5) * spread,
+                        centerY + (Math.random() - 0.5) * spread
+                    ));
+                }
+            }
+
+            setupEventListeners() {
+                // 滑鼠移動
+                this.canvas.addEventListener('mousemove', (e) => {
+                    this.mouseX = e.clientX;
+                    this.mouseY = e.clientY;
+                });
+
+                // 觸控板支援
+                this.canvas.addEventListener('touchstart', (e) => {
+                    if (this.touchpadEnabled) {
+                        e.preventDefault();
+                        const touch = e.touches[0];
+                        this.mouseX = touch.clientX;
+                        this.mouseY = touch.clientY;
+                    }
+                });
+
+                this.canvas.addEventListener('touchmove', (e) => {
+                    if (this.touchpadEnabled) {
+                        e.preventDefault();
+                        const touch = e.touches[0];
+                        this.mouseX = touch.clientX;
+                        this.mouseY = touch.clientY;
+                    }
+                });
+
+                // 視窗大小調整
+                window.addEventListener('resize', () => {
+                    this.resize();
+                    this.createParticles(this.particles.length);
+                });
+
+                // 控制項事件
+                document.getElementById('particleCount').addEventListener('input', (e) => {
+                    this.createParticles(parseInt(e.target.value));
+                });
+
+                document.getElementById('connectionDistance').addEventListener('input', (e) => {
+                    this.connectionDistance = parseInt(e.target.value);
+                });
+
+                document.getElementById('particleSpeed').addEventListener('input', (e) => {
+                    this.particleSpeed = parseFloat(e.target.value);
+                });
+
+                document.getElementById('soundEnabled').addEventListener('change', (e) => {
+                    this.soundEnabled = e.target.checked;
+                });
+
+                document.getElementById('touchpadEnabled').addEventListener('change', (e) => {
+                    this.touchpadEnabled = e.target.checked;
+                });
+            }
+
+            playFireworkSound() {
+                if (!this.soundEnabled) return;
+                
+                try {
+                    if (!this.audioContext) {
+                        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    }
+
+                    // 創建爆炸音效 - 多個頻率疊加
+                    const frequencies = [200, 400, 600, 800];
+                    const duration = 0.3;
+                    
+                    frequencies.forEach((freq, index) => {
+                        const oscillator = this.audioContext.createOscillator();
+                        const gainNode = this.audioContext.createGain();
+                        
+                        oscillator.connect(gainNode);
+                        gainNode.connect(this.audioContext.destination);
+                        
+                        oscillator.frequency.setValueAtTime(freq, this.audioContext.currentTime);
+                        oscillator.frequency.exponentialRampToValueAtTime(freq * 0.5, this.audioContext.currentTime + duration);
+                        
+                        gainNode.gain.setValueAtTime(0.05, this.audioContext.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + duration);
+                        
+                        oscillator.start(this.audioContext.currentTime);
+                        oscillator.stop(this.audioContext.currentTime + duration);
+                    });
+                } catch (error) {
+                    console.log('煙花音效播放失敗:', error);
+                }
+            }
+
+            update() {
+                let connectionCount = 0;
+                this.connections = [];
+
+                // 更新粒子位置，加入向滑鼠聚集的效果
+                this.particles.forEach(particle => {
+                    // 計算到滑鼠的距離
+                    const distanceToMouse = Math.sqrt((particle.x - this.mouseX) ** 2 + (particle.y - this.mouseY) ** 2);
+                    
+                    // 如果粒子在滑鼠附近，增加向滑鼠移動的力
+                    if (distanceToMouse < this.connectionDistance * 1.5) {
+                        const attractionForce = 0.3;
+                        const dx = this.mouseX - particle.x;
+                        const dy = this.mouseY - particle.y;
+                        const distance = Math.max(1, distanceToMouse);
+                        
+                        // 向滑鼠方向施加吸引力
+                        particle.vx += (dx / distance) * attractionForce;
+                        particle.vy += (dy / distance) * attractionForce;
+                        
+                        // 限制速度避免過度聚集
+                        const maxSpeed = 3;
+                        particle.vx = Math.max(-maxSpeed, Math.min(maxSpeed, particle.vx));
+                        particle.vy = Math.max(-maxSpeed, Math.min(maxSpeed, particle.vy));
+                    }
+                    
+                    particle.update(this.canvas.width, this.canvas.height, this.particleSpeed);
+                    
+                    // 檢查與滑鼠的連接
+                    const distance = particle.connectToMouse(this.mouseX, this.mouseY, this.connectionDistance);
+                    if (distance) {
+                        connectionCount++;
+                        this.connections.push({
+                            x1: particle.x,
+                            y1: particle.y,
+                            x2: this.mouseX,
+                            y2: this.mouseY,
+                            opacity: 1 - (distance / this.connectionDistance)
+                        });
+                    }
+                });
+
+                // 檢查粒子之間的連接，增加滑鼠附近的連接密度
+                for (let i = 0; i < this.particles.length; i++) {
+                    for (let j = i + 1; j < this.particles.length; j++) {
+                        const p1 = this.particles[i];
+                        const p2 = this.particles[j];
+                        const distance = Math.sqrt((p1.x - p2.x) ** 2 + (p1.y - p2.y) ** 2);
+                        
+                        // 計算兩個粒子到滑鼠的平均距離
+                        const avgDistanceToMouse = (Math.sqrt((p1.x - this.mouseX) ** 2 + (p1.y - this.mouseY) ** 2) + 
+                                                   Math.sqrt((p2.x - this.mouseX) ** 2 + (p2.y - this.mouseY) ** 2)) / 2;
+                        
+                        // 根據到滑鼠的距離動態調整連接距離
+                        let connectionThreshold = this.connectionDistance * 0.8;
+                        if (avgDistanceToMouse < this.connectionDistance) {
+                            // 滑鼠附近增加連接距離
+                            connectionThreshold = this.connectionDistance * (1.2 - avgDistanceToMouse / this.connectionDistance);
+                        }
+                        
+                        if (distance < connectionThreshold) {
+                            this.connections.push({
+                                x1: p1.x,
+                                y1: p1.y,
+                                x2: p2.x,
+                                y2: p2.y,
+                                opacity: 1 - (distance / connectionThreshold)
+                            });
+                        }
+                    }
+                }
+
+                // 檢查並播放煙花音效
+                let fireworkCount = 0;
+                this.particles.forEach(particle => {
+                    if (particle.fireworkMode && particle.fireworkTimer === 1) {
+                        fireworkCount++;
+                    }
+                });
+                
+                if (fireworkCount > 0 && Date.now() - this.lastConnectionTime > 200) {
+                    this.playFireworkSound();
+                    this.lastConnectionTime = Date.now();
+                }
+
+                // 更新狀態顯示
+                this.updateStatus(connectionCount);
+            }
+
+            draw() {
+                // 清除畫布
+                this.ctx.fillStyle = '#2a2a2a';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                // 繪製連接線
+                this.connections.forEach(connection => {
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(connection.x1, connection.y1);
+                    this.ctx.lineTo(connection.x2, connection.y2);
+                    this.ctx.strokeStyle = `rgba(255, 255, 255, ${connection.opacity * 0.6})`;
+                    this.ctx.lineWidth = 1;
+                    this.ctx.stroke();
+                });
+
+                // 繪製粒子
+                this.particles.forEach(particle => {
+                    particle.draw(this.ctx);
+                });
+            }
+
+            updateStatus(connectionCount) {
+                const status = document.getElementById('status');
+                const fps = Math.round(1000 / (Date.now() - this.lastFrameTime || 16));
+                status.textContent = `粒子: ${this.particles.length} | 連接: ${connectionCount} | FPS: ${fps}`;
+                this.lastFrameTime = Date.now();
+            }
+
+            animate() {
+                this.update();
+                this.draw();
+                requestAnimationFrame(() => this.animate());
+            }
+        }
+
+        // 當頁面載入完成後初始化粒子系統
+        window.addEventListener('load', () => {
+            const canvas = document.getElementById('particleCanvas');
+            new ParticleSystem(canvas);
+        });
+    </script>
+</body>
+</html>

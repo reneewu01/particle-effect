@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>粒子特效 - 調試版</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #2a2a2a;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        
+        canvas {
+            display: block;
+            cursor: crosshair;
+        }
+        
+        .controls {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 14px;
+            z-index: 1000;
+            max-width: 300px;
+        }
+        
+        .controls h3 {
+            margin: 0 0 10px 0;
+            color: #00ff88;
+            text-shadow: 0 0 10px #00ff88;
+        }
+        
+        .controls label {
+            display: block;
+            margin: 5px 0;
+        }
+        
+        .controls input {
+            margin-left: 10px;
+            width: 60px;
+        }
+        
+        .status {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            max-width: 250px;
+        }
+        
+        .debug-info {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 12px;
+            z-index: 1000;
+            max-width: 300px;
+        }
+        
+        .debug-info h4 {
+            margin: 0 0 10px 0;
+            color: #ff6b6b;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="particleCanvas"></canvas>
+    
+    <div class="controls">
+        <h3>粒子控制</h3>
+        <label>粒子數量: <input type="range" id="particleCount" min="50" max="300" value="150"></label>
+        <label>連接距離: <input type="range" id="connectionDistance" min="50" max="200" value="100"></label>
+        <label>粒子速度: <input type="range" id="particleSpeed" min="0.5" max="3" value="1.5" step="0.1"></label>
+        <label>吸引力: <input type="range" id="attractionForce" min="0.1" max="1.0" value="0.3" step="0.1"></label>
+        <label>音效: <input type="checkbox" id="soundEnabled" checked></label>
+        <label>觸控板: <input type="checkbox" id="touchpadEnabled" checked></label>
+        <label>調試模式: <input type="checkbox" id="debugMode" checked></label>
+    </div>
+    
+    <div class="debug-info" id="debugInfo">
+        <h4>調試信息</h4>
+        <div>滑鼠位置: (0, 0)</div>
+        <div>聚集粒子: 0</div>
+        <div>連接密度: 0%</div>
+        <div>平均距離: 0px</div>
+    </div>
+    
+    <div class="status" id="status">
+        粒子: 150 | 連接: 0 | FPS: 60
+    </div>
+
+    <script>
+        class Particle {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.vx = (Math.random() - 0.5) * 2;
+                this.vy = (Math.random() - 0.5) * 2;
+                this.radius = 2;
+                this.originalRadius = 2;
+                this.connections = [];
+                this.isAttracted = false;
+                this.attractionStrength = 0;
+            }
+
+            update(width, height, speed) {
+                this.x += this.vx * speed;
+                this.y += this.vy * speed;
+
+                // 邊界碰撞
+                if (this.x <= 0 || this.x >= width) {
+                    this.vx = -this.vx;
+                    this.x = Math.max(0, Math.min(width, this.x));
+                }
+                if (this.y <= 0 || this.y >= height) {
+                    this.vy = -this.vy;
+                    this.y = Math.max(0, Math.min(height, this.y));
+                }
+            }
+
+            draw(ctx, debugMode = false) {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                
+                if (debugMode && this.isAttracted) {
+                    // 調試模式：被吸引的粒子顯示為不同顏色
+                    ctx.fillStyle = `hsl(${120 + this.attractionStrength * 60}, 100%, 70%)`;
+                } else {
+                    ctx.fillStyle = 'white';
+                }
+                
+                ctx.fill();
+                
+                // 調試模式：顯示速度向量
+                if (debugMode) {
+                    ctx.beginPath();
+                    ctx.moveTo(this.x, this.y);
+                    ctx.lineTo(this.x + this.vx * 5, this.y + this.vy * 5);
+                    ctx.strokeStyle = 'rgba(255, 255, 0, 0.7)';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                }
+            }
+
+            connectToMouse(mouseX, mouseY, connectionDistance) {
+                const distance = Math.sqrt((this.x - mouseX) ** 2 + (this.y - mouseY) ** 2);
+                if (distance < connectionDistance) {
+                    // 根據距離動態調整粒子大小，越近越大
+                    const scale = 1 + (1 - distance / connectionDistance) * 2;
+                    this.radius = this.originalRadius * scale;
+                    this.isAttracted = true;
+                    this.attractionStrength = 1 - (distance / connectionDistance);
+                    return distance;
+                } else {
+                    this.radius = this.originalRadius;
+                    this.isAttracted = false;
+                    this.attractionStrength = 0;
+                    return null;
+                }
+            }
+        }
+
+        class ParticleSystem {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.particles = [];
+                this.mouseX = 0;
+                this.mouseY = 0;
+                this.connectionDistance = 100;
+                this.particleSpeed = 1.5;
+                this.attractionForce = 0.3;
+                this.soundEnabled = true;
+                this.touchpadEnabled = true;
+                this.debugMode = true;
+                this.audioContext = null;
+                this.oscillator = null;
+                this.connections = [];
+                this.lastConnectionTime = 0;
+                this.debugStats = {
+                    clusteredParticles: 0,
+                    connectionDensity: 0,
+                    avgDistance: 0
+                };
+                
+                this.init();
+            }
+
+            init() {
+                this.resize();
+                this.createParticles(150);
+                this.setupEventListeners();
+                this.animate();
+            }
+
+            resize() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+            }
+
+            createParticles(count) {
+                this.particles = [];
+                for (let i = 0; i < count; i++) {
+                    // 創建粒子時稍微偏向中心，讓初始分布更均勻
+                    const centerX = this.canvas.width / 2;
+                    const centerY = this.canvas.height / 2;
+                    const spread = Math.min(this.canvas.width, this.canvas.height) * 0.3;
+                    
+                    this.particles.push(new Particle(
+                        centerX + (Math.random() - 0.5) * spread,
+                        centerY + (Math.random() - 0.5) * spread
+                    ));
+                }
+            }
+
+            setupEventListeners() {
+                // 滑鼠移動
+                this.canvas.addEventListener('mousemove', (e) => {
+                    this.mouseX = e.clientX;
+                    this.mouseY = e.clientY;
+                });
+
+                // 觸控板支援
+                this.canvas.addEventListener('touchstart', (e) => {
+                    if (this.touchpadEnabled) {
+                        e.preventDefault();
+                        const touch = e.touches[0];
+                        this.mouseX = touch.clientX;
+                        this.mouseY = touch.clientY;
+                    }
+                });
+
+                this.canvas.addEventListener('touchmove', (e) => {
+                    if (this.touchpadEnabled) {
+                        e.preventDefault();
+                        const touch = e.touches[0];
+                        this.mouseX = touch.clientX;
+                        this.mouseY = touch.clientY;
+                    }
+                });
+
+                // 視窗大小調整
+                window.addEventListener('resize', () => {
+                    this.resize();
+                    this.createParticles(this.particles.length);
+                });
+
+                // 控制項事件
+                document.getElementById('particleCount').addEventListener('input', (e) => {
+                    this.createParticles(parseInt(e.target.value));
+                });
+
+                document.getElementById('connectionDistance').addEventListener('input', (e) => {
+                    this.connectionDistance = parseInt(e.target.value);
+                });
+
+                document.getElementById('particleSpeed').addEventListener('input', (e) => {
+                    this.particleSpeed = parseFloat(e.target.value);
+                });
+
+                document.getElementById('attractionForce').addEventListener('input', (e) => {
+                    this.attractionForce = parseFloat(e.target.value);
+                });
+
+                document.getElementById('soundEnabled').addEventListener('change', (e) => {
+                    this.soundEnabled = e.target.checked;
+                });
+
+                document.getElementById('touchpadEnabled').addEventListener('change', (e) => {
+                    this.touchpadEnabled = e.target.checked;
+                });
+
+                document.getElementById('debugMode').addEventListener('change', (e) => {
+                    this.debugMode = e.target.checked;
+                });
+            }
+
+            playConnectionSound() {
+                if (!this.soundEnabled) return;
+                
+                try {
+                    if (!this.audioContext) {
+                        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    }
+
+                    const oscillator = this.audioContext.createOscillator();
+                    const gainNode = this.audioContext.createGain();
+                    
+                    oscillator.connect(gainNode);
+                    gainNode.connect(this.audioContext.destination);
+                    
+                    oscillator.frequency.setValueAtTime(800, this.audioContext.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(400, this.audioContext.currentTime + 0.1);
+                    
+                    gainNode.gain.setValueAtTime(0.1, this.audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.1);
+                    
+                    oscillator.start(this.audioContext.currentTime);
+                    oscillator.stop(this.audioContext.currentTime + 0.1);
+                } catch (error) {
+                    console.log('音效播放失敗:', error);
+                }
+            }
+
+            update() {
+                let connectionCount = 0;
+                this.connections = [];
+                let clusteredCount = 0;
+                let totalDistance = 0;
+
+                // 更新粒子位置，加入向滑鼠聚集的效果
+                this.particles.forEach(particle => {
+                    // 計算到滑鼠的距離
+                    const distanceToMouse = Math.sqrt((particle.x - this.mouseX) ** 2 + (particle.y - this.mouseY) ** 2);
+                    totalDistance += distanceToMouse;
+                    
+                    // 如果粒子在滑鼠附近，增加向滑鼠移動的力
+                    if (distanceToMouse < this.connectionDistance * 1.5) {
+                        clusteredCount++;
+                        const attractionForce = this.attractionForce;
+                        const dx = this.mouseX - particle.x;
+                        const dy = this.mouseY - particle.y;
+                        const distance = Math.max(1, distanceToMouse);
+                        
+                        // 向滑鼠方向施加吸引力
+                        particle.vx += (dx / distance) * attractionForce;
+                        particle.vy += (dy / distance) * attractionForce;
+                        
+                        // 限制速度避免過度聚集
+                        const maxSpeed = 3;
+                        particle.vx = Math.max(-maxSpeed, Math.min(maxSpeed, particle.vx));
+                        particle.vy = Math.max(-maxSpeed, Math.min(maxSpeed, particle.vy));
+                    }
+                    
+                    particle.update(this.canvas.width, this.canvas.height, this.particleSpeed);
+                    
+                    // 檢查與滑鼠的連接
+                    const distance = particle.connectToMouse(this.mouseX, this.mouseY, this.connectionDistance);
+                    if (distance) {
+                        connectionCount++;
+                        this.connections.push({
+                            x1: particle.x,
+                            y1: particle.y,
+                            x2: this.mouseX,
+                            y2: this.mouseY,
+                            opacity: 1 - (distance / this.connectionDistance)
+                        });
+                    }
+                });
+
+                // 檢查粒子之間的連接，增加滑鼠附近的連接密度
+                for (let i = 0; i < this.particles.length; i++) {
+                    for (let j = i + 1; j < this.particles.length; j++) {
+                        const p1 = this.particles[i];
+                        const p2 = this.particles[j];
+                        const distance = Math.sqrt((p1.x - p2.x) ** 2 + (p1.y - p2.y) ** 2);
+                        
+                        // 計算兩個粒子到滑鼠的平均距離
+                        const avgDistanceToMouse = (Math.sqrt((p1.x - this.mouseX) ** 2 + (p1.y - this.mouseY) ** 2) + 
+                                                   Math.sqrt((p2.x - this.mouseX) ** 2 + (p2.y - this.mouseY) ** 2)) / 2;
+                        
+                        // 根據到滑鼠的距離動態調整連接距離
+                        let connectionThreshold = this.connectionDistance * 0.8;
+                        if (avgDistanceToMouse < this.connectionDistance) {
+                            // 滑鼠附近增加連接距離
+                            connectionThreshold = this.connectionDistance * (1.2 - avgDistanceToMouse / this.connectionDistance);
+                        }
+                        
+                        if (distance < connectionThreshold) {
+                            this.connections.push({
+                                x1: p1.x,
+                                y1: p1.y,
+                                x2: p2.x,
+                                y2: p2.y,
+                                opacity: 1 - (distance / connectionThreshold)
+                            });
+                        }
+                    }
+                }
+
+                // 播放連接音效
+                if (connectionCount > 0 && Date.now() - this.lastConnectionTime > 100) {
+                    this.playConnectionSound();
+                    this.lastConnectionTime = Date.now();
+                }
+
+                // 更新調試統計
+                this.debugStats.clusteredParticles = clusteredCount;
+                this.debugStats.connectionDensity = Math.round((connectionCount / this.particles.length) * 100);
+                this.debugStats.avgDistance = Math.round(totalDistance / this.particles.length);
+
+                // 更新狀態顯示
+                this.updateStatus(connectionCount);
+                this.updateDebugInfo();
+            }
+
+            draw() {
+                // 清除畫布
+                this.ctx.fillStyle = '#2a2a2a';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                // 調試模式：顯示滑鼠影響範圍
+                if (this.debugMode) {
+                    this.ctx.beginPath();
+                    this.ctx.arc(this.mouseX, this.mouseY, this.connectionDistance, 0, Math.PI * 2);
+                    this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+                    this.ctx.lineWidth = 1;
+                    this.ctx.stroke();
+                    
+                    this.ctx.beginPath();
+                    this.ctx.arc(this.mouseX, this.mouseY, this.connectionDistance * 1.5, 0, Math.PI * 2);
+                    this.ctx.strokeStyle = 'rgba(255, 255, 0, 0.05)';
+                    this.ctx.lineWidth = 1;
+                    this.ctx.stroke();
+                }
+
+                // 繪製連接線
+                this.connections.forEach(connection => {
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(connection.x1, connection.y1);
+                    this.ctx.lineTo(connection.x2, connection.y2);
+                    this.ctx.strokeStyle = `rgba(255, 255, 255, ${connection.opacity * 0.6})`;
+                    this.ctx.lineWidth = 1;
+                    this.ctx.stroke();
+                });
+
+                // 繪製粒子
+                this.particles.forEach(particle => {
+                    particle.draw(this.ctx, this.debugMode);
+                });
+            }
+
+            updateStatus(connectionCount) {
+                const status = document.getElementById('status');
+                const fps = Math.round(1000 / (Date.now() - this.lastFrameTime || 16));
+                status.textContent = `粒子: ${this.particles.length} | 連接: ${connectionCount} | FPS: ${fps}`;
+                this.lastFrameTime = Date.now();
+            }
+
+            updateDebugInfo() {
+                const debugInfo = document.getElementById('debugInfo');
+                debugInfo.innerHTML = `
+                    <h4>調試信息</h4>
+                    <div>滑鼠位置: (${Math.round(this.mouseX)}, ${Math.round(this.mouseY)})</div>
+                    <div>聚集粒子: ${this.debugStats.clusteredParticles}</div>
+                    <div>連接密度: ${this.debugStats.connectionDensity}%</div>
+                    <div>平均距離: ${this.debugStats.avgDistance}px</div>
+                `;
+            }
+
+            animate() {
+                this.update();
+                this.draw();
+                requestAnimationFrame(() => this.animate());
+            }
+        }
+
+        // 當頁面載入完成後初始化粒子系統
+        window.addEventListener('load', () => {
+            const canvas = document.getElementById('particleCanvas');
+            new ParticleSystem(canvas);
+        });
+    </script>
+</body>
+</html>
